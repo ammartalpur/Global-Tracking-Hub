@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useGeolocated } from "react-geolocated";
 import { useUser } from "@clerk/nextjs";
 import dynamic from "next/dynamic";
-import { supabase } from "@/lib/supabase";
 
-// 1. DYNAMIC IMPORT: Prevents Next.js SSR crashes with Leaflet
+// 1. DYNAMIC IMPORT: This strictly prevents Leaflet from running on the server,
+// completely fixing the "window is not defined" 500 error.
 const LiveMap = dynamic(
   () => import("@/components/map/LiveMap").then((mod) => mod.LiveMap),
   {
@@ -21,26 +21,10 @@ const LiveMap = dynamic(
   },
 );
 
-// Define the payload structure for our multiplayer broadcast
-interface UserLocation {
-  userId: string;
-  lat: number;
-  lng: number;
-  username: string;
-}
-
 export default function MapPage() {
   const { user } = useUser();
   const [isMounted, setIsMounted] = useState(false);
   const [showPermissionModal, setShowPermissionModal] = useState(false);
-
-  // State to hold everyone else's locations
-  const [activeUsers, setActiveUsers] = useState<Record<string, UserLocation>>(
-    {},
-  );
-
-  // Ref to hold the active Supabase channel without triggering re-renders
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   // 2. NATIVE GEOLOCATION HOOK
   const {
@@ -50,7 +34,7 @@ export default function MapPage() {
     positionError,
   } = useGeolocated({
     positionOptions: {
-      enableHighAccuracy: true,
+      enableHighAccuracy: true, // Forces precise satellite hardware
       maximumAge: 0,
       timeout: Infinity,
     },
@@ -63,57 +47,7 @@ export default function MapPage() {
     setIsMounted(true);
   }, []);
 
-  // 3. SUPABASE CONNECTION LOGIC (INBOUND)
-  useEffect(() => {
-    if (!isMounted) return;
-
-    // Create a room called 'live-tracking'
-    const channel = supabase.channel("live-tracking", {
-      config: { broadcast: { self: false } }, // We don't need to hear our own echoes
-    });
-
-    // Listen for incoming location broadcasts from other users
-    channel.on("broadcast", { event: "location-update" }, (payload) => {
-      const incomingData = payload.payload as UserLocation;
-
-      // Update our dictionary of active users
-      setActiveUsers((prev) => ({
-        ...prev,
-        [incomingData.userId]: incomingData,
-      }));
-    });
-
-    // Subscribe to the channel
-    channel.subscribe((status) => {
-      if (status === "SUBSCRIBED") {
-        channelRef.current = channel;
-      }
-    });
-
-    // Cleanup connection when user leaves the page
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [isMounted]);
-
-  // 4. BROADCAST OUTBOUND LOGIC
-  useEffect(() => {
-    // If we have GPS coordinates, we are logged in, and the channel is ready: Broadcast!
-    if (coords && user && channelRef.current) {
-      channelRef.current.send({
-        type: "broadcast",
-        event: "location-update",
-        payload: {
-          userId: user.id,
-          lat: coords.latitude,
-          lng: coords.longitude,
-          username: user.username || user.firstName || "Unknown Agent",
-        },
-      });
-    }
-  }, [coords, user]); // This fires every time react-geolocated updates your physical position
-
-  // 5. PERMISSION HANDLING
+  // Watch for permission denial to show the helpful popup
   useEffect(() => {
     if (isMounted && !isGeolocationEnabled) {
       setShowPermissionModal(true);
@@ -122,6 +56,7 @@ export default function MapPage() {
     }
   }, [isGeolocationEnabled, isMounted]);
 
+  // Early return while Next.js prepares the client component
   if (!isMounted) {
     return (
       <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-4">
@@ -138,7 +73,7 @@ export default function MapPage() {
       <div className="flex items-center justify-between bg-slate-800 rounded-xl p-4 shadow-lg border border-slate-700 shrink-0">
         <div>
           <h1 className="text-xl font-bold text-white tracking-tight">
-            Global Tracking Hub
+            Personal GPS Tracker
           </h1>
           {user && (
             <p className="text-sm text-slate-400">
@@ -151,9 +86,15 @@ export default function MapPage() {
         </div>
 
         <div className="flex items-center space-x-2 text-sm">
-          <span className="px-3 py-1 bg-blue-500/20 text-blue-400 border  rounded-full font-medium shadow-sm border-b border-blue-500/50">
-            Active Agents: {Object.keys(activeUsers).length + (coords ? 1 : 0)}
-          </span>
+          {coords ? (
+            <span className="px-3 py-1 bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full font-medium animate-pulse">
+              🛰️ GPS Active
+            </span>
+          ) : (
+            <span className="px-3 py-1 bg-amber-500/20 text-amber-400 border border-amber-500/30 rounded-full font-medium">
+              📡 Searching Satellites...
+            </span>
+          )}
         </div>
       </div>
 
@@ -165,15 +106,12 @@ export default function MapPage() {
               Your browser does not support Geolocation tracking.
             </p>
           </div>
-        ) : coords && user ? (
+        ) : coords ? (
+          // Render the dynamically imported Map when coordinates are locked
           <LiveMap
-            localUser={{
-              userId: user.id,
-              lat: coords.latitude,
-              lng: coords.longitude,
-              username: user.username || user.firstName || "Me",
-            }}
-            otherUsers={activeUsers}
+            latitude={coords.latitude}
+            longitude={coords.longitude}
+            username={user?.username || user?.firstName || "Unknown"}
           />
         ) : (
           <div className="flex h-full items-center justify-center">
@@ -186,10 +124,10 @@ export default function MapPage() {
         )}
       </div>
 
-      {/* Forced Application UI Popup when Location is Blocked */}
+      {/* Fallback Popup if Location is Blocked */}
       {showPermissionModal && (
-        <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm z-9999 flex items-center justify-center p-4">
-          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 text-center animate-in fade-in zoom-in-95 duration-200">
+        <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
+          <div className="bg-slate-800 border border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 text-center">
             <div className="mx-auto w-12 h-12 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-400 text-2xl">
               📍
             </div>
@@ -198,35 +136,35 @@ export default function MapPage() {
                 Location Access Blocked
               </h2>
               <p className="text-sm text-slate-400 leading-relaxed">
-                This app uses real-time hardware tracking to broadcast your
-                location. Your browser is currently blocking GPS access.
+                This app uses real-time hardware tracking. Your browser is
+                currently blocking location access.
               </p>
             </div>
 
             <div className="bg-slate-900/50 rounded-xl p-4 text-left border border-slate-700/50 space-y-2 text-xs text-slate-300">
-              <p className="font-semibold text-slate-200">How to fix this:</p>
+              <p className="font-semibold text-slate-200">
+                How to fix this on your phone:
+              </p>
               <ol className="list-decimal list-inside space-y-1 text-slate-400">
                 <li>
                   Tap the{" "}
                   <span className="text-white font-medium">
                     padlock icon 🔒
                   </span>{" "}
-                  next to the URL.
+                  in your address bar.
                 </li>
                 <li>
-                  Toggle{" "}
-                  <span className="text-emerald-400 font-medium">
-                    Permissions / Location
-                  </span>{" "}
+                  Change{" "}
+                  <span className="text-emerald-400 font-medium">Location</span>{" "}
                   to "Allow".
                 </li>
-                <li>Refresh the webpage.</li>
+                <li>Refresh the page.</li>
               </ol>
             </div>
 
             <button
               onClick={() => window.location.reload()}
-              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 px-4 rounded-xl transition shadow-lg shadow-emerald-600/20 active:scale-[0.98]"
+              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 px-4 rounded-xl transition"
             >
               I Allowed It, Refresh Map
             </button>
