@@ -70,7 +70,6 @@ export default function MapPage() {
     userDecisionTimeout: 5000,
   });
 
-  // THE FIX: Derived State. No need for a useEffect to handle the modal.
   const showPermissionModal = isMounted && !isGeolocationEnabled;
 
   // Setup Hydration Bypass

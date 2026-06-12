@@ -28,7 +28,6 @@ export const useGeolocation = () => {
       return;
     }
 
-    // Configuration options for high-accuracy tracking
     const options: PositionOptions = {
       enableHighAccuracy: true, // Forces device to use GPS rather than just IP lookup
       timeout: 10000, // Wait up to 10 seconds for a reading
