@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   /* config options here */
-  allowedDevOrigins: ["requirements-const-organised-valves.trycloudflare.com"],
+  allowedDevOrigins: ["192.168.18.33"],
 };
 
 export default nextConfig;
