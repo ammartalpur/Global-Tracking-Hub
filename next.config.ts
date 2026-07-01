@@ -2,7 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   /* config options here */
-  allowedDevOrigins: ["trycloudflare.com", "*.trycloudflare.com"],
+  allowedDevOrigins: ["global-tracking-hub.vercel.app"],
 };
 
 export default nextConfig;
